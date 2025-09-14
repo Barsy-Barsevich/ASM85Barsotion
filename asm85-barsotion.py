@@ -1,0 +1,605 @@
+# #!python3
+
+import argparse
+import struct
+
+
+def createParser():
+    parser = argparse.ArgumentParser(
+        prog = "ASM85 Barsotion",
+        description = "Intel 8080/8085 assembler"
+    )
+    parser.add_argument(
+        'input_file',
+        type=str,
+        help = f"Input file"
+    )
+    parser.add_argument(
+        "--start",
+        dest = "startaddr",
+        default = 0,
+        help = f"Code start address"
+    )
+    parser.add_argument(
+        "--binary",
+        dest = "output_binary",
+        default = None,
+        help = f"Output file (binary)"
+    )
+    parser.add_argument(
+        "--processed",
+        dest = "output_processed",
+        default = None,
+        help = f"Processed assembly"
+    )
+    parser.add_argument(
+        "--names",
+        dest = "output_names",
+        default = None,
+        help = f"Names array"
+    )
+    return parser
+
+
+Instructions = {
+    'MOV'   : 0,
+    'MVI'   : 1,
+    'LXI'   : 2,
+    'LDA'   : 3,
+    'STA'   : 4,
+    'LDAX'  : 5,
+    'STAX'  : 6,
+    'LHLD'  : 7,
+    'SHLD'  : 8,
+    'XCHG'  : 9,
+    'PUSH'  : 10,
+    'POP'   : 11,
+    'SPHL'  : 12,
+    'XTHL'  : 13,
+    'PCHL'  : 14,
+    'JMP'   : 15,
+    'JC'    : 16,
+    'JNC'   : 17,
+    'JZ'    : 18,
+    'JNZ'   : 19,
+    'JP'    : 20,
+    'JM'    : 21,
+    'JPE'   : 22,
+    'JPO'   : 23,
+    'CALL'  : 24,
+    'CC'    : 25,
+    'CNC'   : 26,
+    'CZ'    : 27,
+    'CNZ'   : 28,
+    'CP'    : 29,
+    'CM'    : 30,
+    'CPE'   : 31,
+    'CPO'   : 32,
+    'RET'   : 33,
+    'RC'    : 34,
+    'RNC'   : 35,
+    'RZ'    : 36,
+    'RNZ'   : 37,
+    'RP'    : 38,
+    'RM'    : 39,
+    'RPE'   : 40,
+    'RPO'   : 41,
+    'RST'   : 42,
+    'IN'    : 43,
+    'OUT'   : 44,
+    'INR'   : 45,
+    'DCR'   : 46,
+    'INX'   : 47,
+    'DCX'   : 48,
+    'ADD'   : 49,
+    'ADC'   : 50,
+    'ADI'   : 51,
+    'ACI'   : 52,
+    'DAD'   : 53,
+    'SUB'   : 54,
+    'SBB'   : 55,
+    'SUI'   : 56,
+    'SBI'   : 57,
+    'ANA'   : 58,
+    'ORA'   : 59,
+    'XRA'   : 60,
+    'CMP'   : 61,
+    'ANI'   : 62,
+    'ORI'   : 63,
+    'XRI'   : 64,
+    'CPI'   : 65,
+    'RLC'   : 66,
+    'RRC'   : 67,
+    'RAL'   : 68,
+    'RAR'   : 69,
+    'CMA'   : 70,
+    'STC'   : 71,
+    'CMC'   : 72,
+    'DAA'   : 73,
+    'EI'    : 74,
+    'DI'    : 75,
+    'NOP'   : 76,
+    'HLT'   : 77,
+    'RIM'   : 78,
+    'SIM'   : 79,
+    'DSUB'  : 80,
+    'ARHL'  : 81,
+    'RDEL'  : 82,
+    'LDHI'  : 83,
+    'LDSI'  : 84,
+    'RSTV'  : 85,
+    'SHLX'  : 86,
+    'LHLX'  : 87,
+    'JX5'   : 88,
+    'JK'    : 89,
+    'JNX5'  : 90,
+    'JNK'   : 91,
+}
+
+Opcodes = [
+    0x40, 0x06, 0x01, 0x3a, 0x32, 0x0a,
+    0x02, 0x2a, 0x22, 0xeb, 0xc5, 0xc1,
+    0xf9, 0xe3, 0xe9, 0xc3, 0xda, 0xd2,
+    0xca, 0xc2, 0xf2, 0xfa, 0xea, 0xe2,
+    0xcd, 0xdc, 0xd4, 0xcc, 0xc4, 0xf4,
+    0xfc, 0xec, 0xe4, 0xc9, 0xd8, 0xd0,
+    0xc8, 0xc0, 0xf0, 0xf8, 0xe8, 0xe0,
+    0xc7, 0xdb, 0xd3, 0x04, 0x05, 0x03,
+    0x0b, 0x80, 0x88, 0xc6, 0xce, 0x09,
+    0x90, 0x98, 0xd6, 0xde, 0xa0, 0xb0,
+    0xa8, 0xb8, 0xe6, 0xf6, 0xee, 0xfe,
+    0x07, 0x0f, 0x17, 0x1f, 0x2f, 0x37,
+    0x3f, 0x27, 0xfb, 0xf3, 0x00, 0x76,
+    0x20, 0x30, 0x08, 0x10, 0x18, 0x28,
+    0x38, 0xcb, 0xd9, 0xed, 0xfd, 0xfd,
+    0xdd, 0xdd
+]
+
+"""
+Types:
+0 - NOP (no operand)
+1 - MOV (2 arguments, 8-bit registers)
+2 - ADD (8-bit register in 0-1-2)
+3 - INR (8-bit register in 3-4-5)
+4 - ADI (no argument, 2 bytes)
+5 - MVI (8-bit register in 3-4-5 & 2 bytes)
+6 - JMP (no operand, 3 bytes)
+7 - DAD (16-bit register in 4-5, SP-capable)
+8 - POP (16-bit register in 4-5, PSW-capable)
+9 - LXI (16-bit register in 4-5, SP-capable, 3 bytes)
+10 - RST (interrupt vector in 3-4-5)
+"""
+TYPE_NOP = 0
+TYPE_MOV = 1
+TYPE_ADD = 2
+TYPE_INR = 3
+TYPE_ADI = 4
+TYPE_MVI = 5
+TYPE_JMP = 6
+TYPE_DAD = 7
+TYPE_POP = 8
+TYPE_LXI = 9
+TYPE_RST = 10
+
+Types = [
+    1, #MOV
+    5, #MVI
+    9, #LXI
+    6, #LDA
+    6, #STA
+    9, #LDAX
+    9, #STAX
+    6, #LHLD
+    6, #SHLD
+    0, #XCHG
+    8, #PUSH
+    8, #POP
+    0, #SPHL
+    0, #XTHL
+    0, #PCHL
+    6, #JMP
+    6, #JC
+    6, #JNC
+    6, #JZ
+    6, #JNZ
+    6, #JP
+    6, #JM
+    6, #JPE
+    6, #JPO
+    6, #CALL
+    6, #CC
+    6, #CNC
+    6, #CZ
+    6, #CNZ
+    6, #CP
+    6, #CM
+    6, #CPE
+    6, #CPO
+    0, #RET
+    0, #RC
+    0, #RNC
+    0, #RZ
+    0, #RNZ
+    0, #RP
+    0, #RM
+    0, #RPE
+    0, #RPO
+    10,#RST
+    4, #IN
+    4, #OUT
+    3, #INR
+    3, #DCR
+    7, #INX
+    7, #DCX
+    2, #ADD
+    2, #ADC
+    4, #ADI
+    4, #ACI
+    7, #DAD
+    2, #SUB
+    2, #SBB
+    4, #SUI
+    4, #SBI
+    2, #ANA
+    2, #ORA
+    2, #XRA
+    2, #CMP
+    4, #ANI
+    4, #ORI
+    4, #XRI
+    4, #CPI
+    0, #RLC
+    0, #RRC
+    0, #RAL
+    0, #RAR
+    0, #CMA
+    0, #STC
+    0, #CMC
+    0, #DAA
+    0, #EI
+    0, #DI
+    0, #NOP
+    0, #HLT
+    0, #RIM
+    0, #SIM
+    0, #DSUB
+    0, #ARHL
+    0, #RDEL
+    4, #LDHI
+    4, #LDSI
+    0, #RSTV
+    0, #SHLX
+    0, #LHLX
+    6, #JX5
+    6, #JK
+    6, #JNX5
+    6, #JNK
+]
+
+
+def reg8_to_code(reg):
+    code = 0
+    if reg == 'B':
+        code = 0b000
+    elif reg == 'C':
+        code = 0b001
+    elif reg == 'D':
+        code = 0b010
+    elif reg == 'E':
+        code = 0b011
+    elif reg == 'H':
+        code = 0b100
+    elif reg == 'L':
+        code = 0b101
+    elif reg == 'M':
+        code = 0b110
+    elif reg == 'A':
+        code = 0b111
+    else:
+        raise Exception("Incorrect 8-bit register argument")
+    return code
+
+
+def reg16_sp_to_code(reg):
+    code = 0
+    if reg == 'B':
+        code = 0b00
+    elif reg == 'D':
+        code = 0b01
+    elif reg == 'H':
+        code == 0b10
+    elif reg == 'SP':
+        code = 0b11
+    else:
+        raise Exception("Incorrect 16-bit (SP-capable) register argument")
+    return code
+
+
+def reg16_psw_to_code(reg):
+    code = 0
+    if reg == 'B':
+        code = 0b00
+    elif reg == 'D':
+        code = 0b01
+    elif reg == 'H':
+        code == 0b10
+    elif reg == 'PSW':
+        code = 0b11
+    else:
+        raise Exception("Incorrect 16-bit (PSW-capable) register argument")
+    return code
+
+
+    
+
+
+
+class trans:
+
+    def __init__(self, input_file, output_asm_file, output_binary_file, startaddr):
+        self.input_file = input_file
+        self.output_asm_file = output_asm_file
+        self.output_binary_file = output_binary_file
+        self.name_list = dict()
+        self.output_binary = bytes([])
+        self.binary_write_enable = False
+        
+        print('Get names values...', end=' ')
+        end = self.translate(self.input_file, startaddr)
+        print(f'End at {hex(end)}')
+        self.binary_write_enable = True
+        print('Generate code...')
+        end = self.translate(self.input_file, startaddr)
+        #print(self.output_binary)
+        print('Saving...')
+        with open(self.output_binary_file, 'wb') as f:
+            f.write(self.output_binary)
+        
+    
+    def auto_decode_number(self, s):
+        val = None
+        if s[0].isdigit() or s[0] == '$':
+            if s[0] == '$':
+                if len(s) == 1:
+                    raise Exception('Incorrect number constant')
+                else:
+                    val = int(s[1:], 16)
+        
+            if len(s) == 1:
+                val = int(s)
+                
+            elif s[:2] == '0x':
+                if len(s) == 2:
+                    raise Exception('Incorrect number constant')
+                else:
+                    val = int(s, 16)
+            
+            elif s[:2] == '0b':
+                if len(s) == 2:
+                    raise Exception('Incorrect number constant')
+                else:
+                    val = int(s, 2)
+            
+            elif s[:2] == '0o':
+                if len(s) == 2:
+                    raise Exception('Incorrect number constant')
+                else:
+                    val = int(s, 8)
+            
+            elif s[-1].upper() == 'H':
+                val = int(s[:-1], 16)
+            
+            else:
+                val = int(s, 10)
+            
+        else:
+            val = self.name_list.get(s)
+            if val == None:
+                val = 0
+        return val
+        
+        
+    def form_opcode(self, instruction, arg1, arg2):
+        instruction_number = Instructions.get(instruction)
+        if instruction_number == None:
+            return None, None, None
+        opcode = Opcodes[instruction_number]
+        opcode1 = None
+        opcode2 = None
+        instruction_type = Types[instruction_number]
+        if instruction_type == TYPE_NOP:
+            if arg1 != None or arg2 != None:
+                raise Exception('Argument error')
+                
+        elif instruction_type == TYPE_MOV:
+            if arg1 == None or arg2 == None:
+                raise Exception('Argument error')
+            opcode += reg8_to_code(arg1) * 8
+            opcode += reg8_to_code(arg2)
+            
+        elif instruction_type == TYPE_ADD:
+            if arg1 == None or arg2 != None:
+                raise Exception('Argument error')
+            opcode += reg8_to_code(arg1)
+            
+        elif instruction_type == TYPE_INR:
+            if arg1 == None or arg2 != None:
+                raise Exception('Argument error')
+            opcode += reg8_to_code(arg1) * 8
+            
+        elif instruction_type == TYPE_ADI:
+            if arg1 == None or arg2 != None:
+                raise Exception('Argument error')
+            opcode1 = self.auto_decode_number(arg1)
+            if opcode1 > 255:
+                raise Exception('Too big value in argument')
+            
+        elif instruction_type == TYPE_MVI:
+            if arg1 == None or arg2 == None:
+                raise Exception('Argument error')
+            opcode += reg8_to_code(arg1) * 8
+            opcode1 = self.auto_decode_number(arg2)
+            if opcode1 > 255:
+                raise Exception('Too big value in argument')
+            
+        elif instruction_type == TYPE_JMP:
+            if arg1 == None or arg2 != None:
+                raise Exception('Argument error')
+            val = self.auto_decode_number(arg1)
+            if val > 65536:
+                raise Exception('Too big value in argument')
+            opcode1 = val %  256
+            opcode2 = val // 256
+            
+        elif instruction_type == TYPE_DAD:
+            if arg1 == None or arg2 != None:
+                raise Exception('Argument error')
+            opcode += reg16_sp_to_code(arg1) * 16
+            
+        elif instruction_type == TYPE_POP:
+            if arg1 == None or arg2 != None:
+                raise Exception('Argument error')
+            opcode += reg16_psw_to_code(arg1) * 16
+            
+        elif instruction_type == TYPE_LXI:
+            if arg1 == None or arg2 == None:
+                raise Exception('Argument error')
+            opcode += reg16_sp_to_code(arg1) * 16
+            val = self.auto_decode_number(arg2)
+            if val > 65536:
+                raise Exception('Too big value in argument')
+            opcode1 = val %  256
+            opcode2 = val // 256
+        elif instruction_type == TYPE_RST:
+            if arg1 == None or arg2 != None:
+                raise Exception('Argument error')
+            val = self.auto_decode_number(arg1)
+            if val > 7:
+                raise Exception('Too big value in argument')
+        else:
+            raise Exception("Critical: incorrect instruction type")
+        
+        return opcode, opcode1, opcode2
+
+
+    def decode_statement(self, statement):
+        idx = 0
+        while idx < len(statement) and (statement[idx] == ' '):
+            idx += 1
+        if (idx == len(statement)) or statement[idx] == ';':
+            return (None, None, None)
+            
+        instruction = ''
+        while idx < len(statement) and statement[idx] != ' ' and statement[idx] != ';':
+            instruction += statement[idx]
+            idx += 1
+        if (idx == len(statement)) or statement[idx] == ';':
+            return (instruction, None, None)
+            
+        while idx < len(statement) and (statement[idx] == ' '):
+            idx += 1
+        if (idx == len(statement)) or statement[idx] == ';':
+            return (instruction, None, None)
+        
+        arg1 = ''
+        while idx < len(statement) and statement[idx] != ' ' and statement[idx] != ';' and statement[idx] != ',':
+            arg1 += statement[idx]
+            idx += 1
+        if (idx == len(statement)) or statement[idx] == ';':
+            return (instruction, arg1, None)
+        
+        while idx < len(statement) and (statement[idx] == ' ' or statement[idx] == ','):
+            idx += 1
+        if (idx == len(statement)) or statement[idx] == ';':
+            return (instruction, arg1, None)
+        
+        arg2 = ''
+        while idx < len(statement) and statement[idx] != ' ' and statement[idx] != ';':
+            arg2 += statement[idx]
+            idx += 1
+        return (instruction, arg1, arg2)
+
+
+    def translate(self, filename, instruction_cnt):
+        with open(filename, 'r') as input_f:
+            statement_cnt = 0
+            try:
+                for statement in input_f:
+                    statement_cnt += 1;
+                    instruction, arg1, arg2 = self.decode_statement(statement[:-1])
+                    if instruction == None:
+                        continue
+                    if instruction[-1] == ':':
+                        self.name_list[instruction[:-1]] = instruction_cnt
+                    elif instruction[0] == '.':
+                        if instruction.upper() == '.INCLUDE':
+                            if arg1 == None:
+                                raise Exception('Argument error')
+                            subfile = arg1[1:-1]
+                            instruction_cnt = self.translate(subfile, instruction_cnt)
+                        elif instruction.upper() == '.DB':
+                            if arg1 == None:
+                                raise Exception('Argument error')
+                            instruction_cnt += 1
+                            val = self.auto_decode_number(arg1)
+                            if val > 255:
+                                raise Exception('Too big value in argument')
+                            if self.binary_write_enable:
+                                self.output_binary += struct.pack('B', val)
+                        elif instruction.upper() == '.DW':
+                            if arg1 == None:
+                                raise Exception('Argument error')
+                            instruction_cnt += 2
+                            val = self.auto_decode_number(arg1)
+                            if val > 65535:
+                                raise Exception('Too big value in argument')
+                            if self.binary_write_enable:
+                                self.output_binary += struct.pack('h', val)
+                        elif instruction.upper() == '.DS':
+                            if arg1 == None:
+                                raise Exception('Argument error')
+                            instruction_cnt += len(arg1)
+                            if self.binary_write_enable:
+                                self.output_binary += bytes(arg1, 'windows-1251')
+                        elif instruction.upper() == '.EQU':
+                            if arg1 == None or arg2 == None:
+                                raise Exception('Argument error')
+                            self.name_list[arg1] = self.auto_decode_number(arg2)
+                        
+                    else:
+                        o, o1, o2 = self.form_opcode(instruction.upper(), arg1, arg2)
+                        if o == None:
+                            raise Exception('Unknown instruction')
+                            
+                        instruction_cnt += 1
+                        if self.binary_write_enable:
+                            self.output_binary += struct.pack('B', o)
+                        if o1 != None:
+                            instruction_cnt += 1
+                            if self.binary_write_enable:
+                                self.output_binary += struct.pack('B', o1)
+                        if o2 != None:
+                            instruction_cnt += 1
+                            if self.binary_write_enable:
+                                self.output_binary += struct.pack('B', o2)
+                        
+            except Exception as e:
+                print(f'An error occured in file "{filename}": {e}, line {statement_cnt}')
+        return instruction_cnt
+            
+
+parser = createParser()
+namespace = parser.parse_args()
+startaddr = int(namespace.startaddr)
+translator = trans(namespace.input_file, namespace.output_processed, namespace.output_binary, startaddr)
+
+
+
+
+
+
+
+
+
+
+
