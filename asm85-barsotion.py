@@ -11,7 +11,7 @@ def createParser():
         description = DESCRIPTION
     )
     parser.add_argument(
-        'input_file',
+        'input_filename',
         type=str,
         help = f"Input file"
     )
@@ -23,7 +23,7 @@ def createParser():
         help = f"code start address, 0x0000 by default"
     )
     parser.add_argument(
-        "binary_filename",
+        "output_filename",
         default = None,
         help = f"Output file (binary)"
     )
@@ -50,7 +50,7 @@ def createParser():
     )
     parser.add_argument(
         "--dis-ui",
-        dest = "only_8080",
+        dest = "only_8085",
         action = 'store_true',
         default = False,
         help = "Disable undocumented 8085 instructions"
@@ -357,27 +357,34 @@ def reg16_psw_to_code(reg):
 
 class trans:
 
-    def __init__(self, input_file, output_asm_file, output_binary_file, startaddr, names):
-        self.input_file = input_file
-        self.output_asm_file = output_asm_file
-        self.output_binary_file = output_binary_file
+    def __init__(self):
+    
+        parser = createParser()
+        namespace = parser.parse_args()
+        if not namespace.startaddr[0].isdigit():
+            raise Exception('Incorrect start address')
+        startaddr = self.auto_decode_number(namespace.startaddr)
+        
+        self.only_8080 = namespace.only_8080
+        self.only_8085 = namespace.only_8085
+        
         self.name_list = dict()
         self.output_binary = bytes([])
         self.binary_write_enable = False
         
-        print('Get names values...', end=' ')
-        end = self.translate(self.input_file, startaddr)
+        print('Get names values...')
+        end = self.translate(namespace.input_filename, startaddr)
         print(f'End at {hex(end)}')
         self.binary_write_enable = True
         print('Generate code...')
-        end = self.translate(self.input_file, startaddr)
+        end = self.translate(namespace.input_filename, startaddr)
         #print(self.output_binary)
         print('Saving...')
-        with open(self.output_binary_file, 'wb') as f:
+        with open(namespace.output_filename, 'wb') as f:
             f.write(self.output_binary)
-        if names != None:
+        if namespace.names_filename != None:
             keys = list(self.name_list.keys())
-            with open(names, 'w') as f:
+            with open(namespace.names_filename, 'w') as f:
                 for name in keys:
                     f.write(f'{name}  {hex(self.name_list.get(name))}\n')
         
@@ -427,6 +434,12 @@ class trans:
         
     def form_opcode(self, instruction, arg1, arg2):
         instruction_number = Instructions.get(instruction)
+        if self.only_8080:
+            if instruction_number > 77:
+                raise Exception(f'Unsupported instruction for 8080: {instruction}')
+        if self.only_8085:
+            if instruction_number > 79:
+                raise Exception(f'Undocumented 8085 instructions are disabled: {instruction}')
         if instruction_number == None:
             return None, None, None
         opcode = Opcodes[instruction_number]
@@ -613,15 +626,12 @@ class trans:
                                 self.output_binary += struct.pack('B', o2)
                         
             except Exception as e:
-                print(f'An error occured in file "{filename}": {e}, line {statement_cnt}')
-                print(f'*** "{statement[:-1]}"')
+                print(f'An error occured in file "{filename}": {e}')
+                print(f'{statement_cnt}: "{statement[:-1]}"')
         return instruction_cnt
             
 
-parser = createParser()
-namespace = parser.parse_args()
-startaddr = int(namespace.startaddr)
-translator = trans(namespace.input_file, namespace.processed_asm_filename, namespace.binary_filename, startaddr, namespace.names_filename)
+translator = trans()
 
 
 
