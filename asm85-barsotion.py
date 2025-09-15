@@ -3,11 +3,12 @@
 import argparse
 import struct
 
+DESCRIPTION = "Intel 8080/8085 assembler. All of the commands of 8085 are supported, including undocumented instructions such as 'DSUB', 'ARHL', 'RDEL', 'LDHI', LDSI', 'RSTV', 'SHLX', 'LHLX', 'JNX5'('JNK'), 'JX5'('JK')."
 
 def createParser():
     parser = argparse.ArgumentParser(
         prog = "ASM85 Barsotion",
-        description = "Intel 8080/8085 assembler"
+        description = DESCRIPTION
     )
     parser.add_argument(
         'input_file',
@@ -15,29 +16,46 @@ def createParser():
         help = f"Input file"
     )
     parser.add_argument(
+        "-s",
         "--start",
         dest = "startaddr",
         default = 0,
-        help = f"Code start address"
+        help = f"code start address, 0x0000 by default"
     )
     parser.add_argument(
-        "--binary",
-        dest = "output_binary",
+        "binary_filename",
         default = None,
         help = f"Output file (binary)"
     )
     parser.add_argument(
+        "-p",
         "--processed",
-        dest = "output_processed",
+        dest = "processed_asm_filename",
         default = None,
         help = f"Processed assembly"
     )
     parser.add_argument(
+        "-n",
         "--names",
-        dest = "output_names",
+        dest = "names_filename",
         default = None,
         help = f"Names array"
     )
+    parser.add_argument(
+        "--8080",
+        dest = "only_8080",
+        action = 'store_true',
+        default = False,
+        help = "Support only i8080 instructions"
+    )
+    parser.add_argument(
+        "--dis-ui",
+        dest = "only_8080",
+        action = 'store_true',
+        default = False,
+        help = "Disable undocumented 8085 instructions"
+    )
+    
     return parser
 
 
@@ -187,8 +205,8 @@ Types = [
     9, #LXI
     6, #LDA
     6, #STA
-    9, #LDAX
-    9, #STAX
+    7, #LDAX
+    7, #STAX
     6, #LHLD
     6, #SHLD
     0, #XCHG
@@ -278,6 +296,7 @@ Types = [
 
 
 def reg8_to_code(reg):
+    reg = reg.upper()
     code = 0
     if reg == 'B':
         code = 0b000
@@ -301,6 +320,7 @@ def reg8_to_code(reg):
 
 
 def reg16_sp_to_code(reg):
+    reg = reg.upper()
     code = 0
     if reg == 'B':
         code = 0b00
@@ -316,6 +336,7 @@ def reg16_sp_to_code(reg):
 
 
 def reg16_psw_to_code(reg):
+    reg = reg.upper()
     code = 0
     if reg == 'B':
         code = 0b00
@@ -336,7 +357,7 @@ def reg16_psw_to_code(reg):
 
 class trans:
 
-    def __init__(self, input_file, output_asm_file, output_binary_file, startaddr):
+    def __init__(self, input_file, output_asm_file, output_binary_file, startaddr, names):
         self.input_file = input_file
         self.output_asm_file = output_asm_file
         self.output_binary_file = output_binary_file
@@ -354,6 +375,11 @@ class trans:
         print('Saving...')
         with open(self.output_binary_file, 'wb') as f:
             f.write(self.output_binary)
+        if names != None:
+            keys = list(self.name_list.keys())
+            with open(names, 'w') as f:
+                for name in keys:
+                    f.write(f'{name}  {hex(self.name_list.get(name))}\n')
         
     
     def auto_decode_number(self, s):
@@ -365,7 +391,7 @@ class trans:
                 else:
                     val = int(s[1:], 16)
         
-            if len(s) == 1:
+            elif len(s) == 1:
                 val = int(s)
                 
             elif s[:2] == '0x':
@@ -454,6 +480,9 @@ class trans:
         elif instruction_type == TYPE_DAD:
             if arg1 == None or arg2 != None:
                 raise Exception('Argument error')
+            if instruction == 'LDAX' or instruction == 'STAX':
+                if arg1.upper() != 'B' and arg1.upper() != 'D':
+                    raise Exception('Argument error')
             opcode += reg16_sp_to_code(arg1) * 16
             
         elif instruction_type == TYPE_POP:
@@ -585,13 +614,14 @@ class trans:
                         
             except Exception as e:
                 print(f'An error occured in file "{filename}": {e}, line {statement_cnt}')
+                print(f'*** "{statement[:-1]}"')
         return instruction_cnt
             
 
 parser = createParser()
 namespace = parser.parse_args()
 startaddr = int(namespace.startaddr)
-translator = trans(namespace.input_file, namespace.output_processed, namespace.output_binary, startaddr)
+translator = trans(namespace.input_file, namespace.processed_asm_filename, namespace.binary_filename, startaddr, namespace.names_filename)
 
 
 
