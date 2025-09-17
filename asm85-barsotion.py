@@ -13,47 +13,47 @@ def createParser():
     parser.add_argument(
         'input_filename',
         type=str,
-        help = f"Input file"
+        help = f"Input assembly language file."
+    )
+    parser.add_argument(
+        "output_filename",
+        default = None,
+        help = f"Output translated file (binary)."
     )
     parser.add_argument(
         "-s",
         "--start",
         dest = "startaddr",
-        default = 0,
-        help = f"code start address, 0x0000 by default"
-    )
-    parser.add_argument(
-        "output_filename",
-        default = None,
-        help = f"Output file (binary)"
+        default = '0',
+        help = f"Code start address, 0x0000 by default."
     )
     parser.add_argument(
         "-p",
         "--processed",
         dest = "processed_asm_filename",
         default = None,
-        help = f"Processed assembly"
+        help = f"Processed assembly, for debug."
     )
     parser.add_argument(
         "-n",
         "--names",
         dest = "names_filename",
         default = None,
-        help = f"Names array"
+        help = f"Names array file target."
     )
     parser.add_argument(
         "--8080",
         dest = "only_8080",
         action = 'store_true',
         default = False,
-        help = "Support only i8080 instructions"
+        help = "Support only i8080 instructions."
     )
     parser.add_argument(
         "--dis-ui",
         dest = "only_8085",
         action = 'store_true',
         default = False,
-        help = "Disable undocumented 8085 instructions"
+        help = "Disable undocumented 8085 instructions."
     )
     
     return parser
@@ -327,7 +327,7 @@ def reg16_sp_to_code(reg):
     elif reg == 'D':
         code = 0b01
     elif reg == 'H':
-        code == 0b10
+        code = 0b10
     elif reg == 'SP':
         code = 0b11
     else:
@@ -343,7 +343,7 @@ def reg16_psw_to_code(reg):
     elif reg == 'D':
         code = 0b01
     elif reg == 'H':
-        code == 0b10
+        code = 0b10
     elif reg == 'PSW':
         code = 0b11
     else:
@@ -370,23 +370,36 @@ class trans:
         
         self.name_list = dict()
         self.output_binary = bytes([])
+        self.processed_asm = ''
         self.binary_write_enable = False
+        self.processed_write_enable = False
         
         print('Get names values...')
-        end = self.translate(namespace.input_filename, startaddr)
+        end, error = self.translate(namespace.input_filename, startaddr)
+        if error:
+            return
         print(f'End at {hex(end)}')
         self.binary_write_enable = True
+        if namespace.processed_asm_filename != None:
+            self.processed_write_enable = True
         print('Generate code...')
-        end = self.translate(namespace.input_filename, startaddr)
+        end, error = self.translate(namespace.input_filename, startaddr)
+        if error:
+            return
         #print(self.output_binary)
         print('Saving...')
         with open(namespace.output_filename, 'wb') as f:
             f.write(self.output_binary)
         if namespace.names_filename != None:
+            print('Write names file...')
             keys = list(self.name_list.keys())
             with open(namespace.names_filename, 'w') as f:
                 for name in keys:
                     f.write(f'{name}  {hex(self.name_list.get(name))}\n')
+        if self.processed_write_enable:
+            print('Write processed assembly file...')
+            with open(namespace.processed_asm_filename, 'w') as f:
+                f.write(self.processed_asm)
         
     
     def auto_decode_number(self, s):
@@ -394,7 +407,7 @@ class trans:
         if s[0].isdigit() or s[0] == '$':
             if s[0] == '$':
                 if len(s) == 1:
-                    raise Exception('Incorrect number constant')
+                    raise Exception(f'Incorrect number constant: {s}')
                 else:
                     val = int(s[1:], 16)
         
@@ -403,19 +416,19 @@ class trans:
                 
             elif s[:2] == '0x':
                 if len(s) == 2:
-                    raise Exception('Incorrect number constant')
+                    raise Exception(f'Incorrect number constant: {s}')
                 else:
                     val = int(s, 16)
             
             elif s[:2] == '0b':
                 if len(s) == 2:
-                    raise Exception('Incorrect number constant')
+                    raise Exception(f'Incorrect number constant: {s}')
                 else:
                     val = int(s, 2)
             
             elif s[:2] == '0o':
                 if len(s) == 2:
-                    raise Exception('Incorrect number constant')
+                    raise Exception(f'Incorrect number constant: {s}')
                 else:
                     val = int(s, 8)
             
@@ -426,8 +439,13 @@ class trans:
                 val = int(s, 10)
             
         else:
-            val = self.name_list.get(s)
+            if s[-1].upper() == 'H':
+                val = int(s[:-1], 16)
+            else:
+                val = self.name_list.get(s)
             if val == None:
+                if self.binary_write_enable:
+                    raise Exception("Undefined constant: {s}")
                 val = 0
         return val
         
@@ -471,7 +489,7 @@ class trans:
                 raise Exception('Argument error')
             opcode1 = self.auto_decode_number(arg1)
             if opcode1 > 255:
-                raise Exception('Too big value in argument')
+                raise Exception(f'Too big value in argument: {opcode1}')
             
         elif instruction_type == TYPE_MVI:
             if arg1 == None or arg2 == None:
@@ -479,14 +497,14 @@ class trans:
             opcode += reg8_to_code(arg1) * 8
             opcode1 = self.auto_decode_number(arg2)
             if opcode1 > 255:
-                raise Exception('Too big value in argument')
+                raise Exception(f'Too big value in argument: {opcode1}')
             
         elif instruction_type == TYPE_JMP:
             if arg1 == None or arg2 != None:
                 raise Exception('Argument error')
             val = self.auto_decode_number(arg1)
-            if val > 65536:
-                raise Exception('Too big value in argument')
+            if val > 65535:
+                raise Exception(f'Too big value in argument: {opcode1}')
             opcode1 = val %  256
             opcode2 = val // 256
             
@@ -495,7 +513,7 @@ class trans:
                 raise Exception('Argument error')
             if instruction == 'LDAX' or instruction == 'STAX':
                 if arg1.upper() != 'B' and arg1.upper() != 'D':
-                    raise Exception('Argument error')
+                    raise Exception('Argument error: {arg1} with {instruction}')
             opcode += reg16_sp_to_code(arg1) * 16
             
         elif instruction_type == TYPE_POP:
@@ -508,8 +526,8 @@ class trans:
                 raise Exception('Argument error')
             opcode += reg16_sp_to_code(arg1) * 16
             val = self.auto_decode_number(arg2)
-            if val > 65536:
-                raise Exception('Too big value in argument')
+            if val > 65535:
+                raise Exception(f'Too big value in argument: {val}')
             opcode1 = val %  256
             opcode2 = val // 256
         elif instruction_type == TYPE_RST:
@@ -517,7 +535,7 @@ class trans:
                 raise Exception('Argument error')
             val = self.auto_decode_number(arg1)
             if val > 7:
-                raise Exception('Too big value in argument')
+                raise Exception(f'Too big value in argument: {val}')
         else:
             raise Exception("Critical: incorrect instruction type")
         
@@ -560,7 +578,57 @@ class trans:
             arg2 += statement[idx]
             idx += 1
         return (instruction, arg1, arg2)
-
+    
+    
+    def int_to_hex4(self, i):
+        r0 = i % 16
+        i //= 16
+        r1 = i % 16
+        i //= 16
+        r2 = i % 16
+        i //= 16
+        r3 = i % 16
+        s = hex(r3)[-1] + hex(r2)[-1] + hex(r1)[-1] + hex(r0)[-1]
+        return s.upper()
+    
+    def int_to_hex2(self, i):
+        r0 = i % 16
+        i //= 16
+        r1 = i % 16
+        s = hex(r1)[-1] + hex(r0)[-1]
+        return s.upper()
+    
+    
+    def statement_to_processed(self, statement, instruction_cnt, instruction, o, o1, o2):
+        if instruction == None:
+            self.processed_asm += '             ' + statement
+        elif instruction[-1] == ':':
+            self.processed_asm += statement
+        elif instruction.upper() == '.INCLUDE' or instruction.upper() == '.DEF' or instruction.upper() == '.EQU' or instruction.upper() == '.ORG':
+            self.processed_asm += statement
+        else:
+            if o2 != None:
+                instruction_cnt -= 3
+            elif o1 != None:
+                instruction_cnt -= 2
+            else:
+                instruction_cnt -= 1
+            #self.processed_asm += self.int_to_hex4(instruction_cnt) + ' ' + self.int_to_hex2(o) + '  ' + statement
+            #if o1 != None:
+            #    self.processed_asm += self.int_to_hex4(instruction_cnt+1) + ' ' + self.int_to_hex2(o1) + '\n'
+            #if o2 != None:
+            #    self.processed_asm += self.int_to_hex4(instruction_cnt+2) + ' ' + self.int_to_hex2(o2) + '\n'
+            self.processed_asm += self.int_to_hex4(instruction_cnt) + ' ' + self.int_to_hex2(o)# + '  ' + statement
+            if o1 != None:
+                self.processed_asm += self.int_to_hex2(o1)
+            else:
+                self.processed_asm += '  '
+            if o2 != None:
+                self.processed_asm += self.int_to_hex2(o2)
+            else:
+                self.processed_asm += '  '
+            self.processed_asm += '  ' + statement
+    
 
     def translate(self, filename, instruction_cnt):
         with open(filename, 'r') as input_f:
@@ -569,7 +637,12 @@ class trans:
                 for statement in input_f:
                     statement_cnt += 1;
                     instruction, arg1, arg2 = self.decode_statement(statement[:-1])
+                    o = 0
+                    o1 = 0
+                    o2 = 0
                     if instruction == None:
+                        if self.processed_write_enable:
+                            self.processed_asm += '\n'
                         continue
                     if instruction[-1] == ':':
                         self.name_list[instruction[:-1]] = instruction_cnt
@@ -578,7 +651,9 @@ class trans:
                             if arg1 == None:
                                 raise Exception('Argument error')
                             subfile = arg1[1:-1]
-                            instruction_cnt = self.translate(subfile, instruction_cnt)
+                            instruction_cnt, error = self.translate(subfile, instruction_cnt)
+                            if error:
+                                return instruction_cnt, True
                         elif instruction.upper() == '.DB':
                             if arg1 == None:
                                 raise Exception('Argument error')
@@ -586,6 +661,9 @@ class trans:
                             val = self.auto_decode_number(arg1)
                             if val > 255:
                                 raise Exception('Too big value in argument')
+                            o = val
+                            o1 = None
+                            o2 = None
                             if self.binary_write_enable:
                                 self.output_binary += struct.pack('B', val)
                         elif instruction.upper() == '.DW':
@@ -595,6 +673,9 @@ class trans:
                             val = self.auto_decode_number(arg1)
                             if val > 65535:
                                 raise Exception('Too big value in argument')
+                            o = val % 256
+                            o1 = val // 256
+                            o2 = None
                             if self.binary_write_enable:
                                 self.output_binary += struct.pack('h', val)
                         elif instruction.upper() == '.DS':
@@ -611,7 +692,7 @@ class trans:
                     else:
                         o, o1, o2 = self.form_opcode(instruction.upper(), arg1, arg2)
                         if o == None:
-                            raise Exception('Unknown instruction')
+                            raise Exception(f'Unknown instruction: "{instruction}"')
                             
                         instruction_cnt += 1
                         if self.binary_write_enable:
@@ -624,11 +705,17 @@ class trans:
                             instruction_cnt += 1
                             if self.binary_write_enable:
                                 self.output_binary += struct.pack('B', o2)
+                        if instruction_cnt > 65536:
+                            raise Exception('End of addressable memory reached')
+                    
+                    if self.processed_write_enable:
+                        self.statement_to_processed(statement, instruction_cnt, instruction, o, o1, o2)
                         
             except Exception as e:
                 print(f'An error occured in file "{filename}": {e}')
                 print(f'{statement_cnt}: "{statement[:-1]}"')
-        return instruction_cnt
+                return instruction_cnt, True
+        return instruction_cnt, False
             
 
 translator = trans()
